@@ -128,11 +128,28 @@ class SimulatedGoalFlowDataset(GoalFlowDataset):
         """Generate simulated data."""
         data = []
         for i in range(self.num_samples):
+            # Generate random lidar points (x, y, z, intensity)
+            lidar_points = torch.randn(1000, 4) * 10
+            lidar_points[:, 2] = torch.rand(1000) * 3  # z between 0-3
+            lidar_points[:, 3] = torch.rand(1000)  # intensity 0-1
+
+            # Add voxel coordinates (room_x, room_y, room_z) for 7D input
+            # Normalize to point cloud range
+            room_x = (lidar_points[:, 0] - (-50)) / 100  # normalized to 0-1
+            room_y = (lidar_points[:, 1] - (-50)) / 100
+            room_z = (lidar_points[:, 2] - (-3)) / 6
+            lidar_points_7d = torch.cat([
+                lidar_points,
+                room_x.unsqueeze(1),
+                room_y.unsqueeze(1),
+                room_z.unsqueeze(1),
+            ], dim=1)  # (1000, 7)
+
             sample = {
                 "images": torch.randn(
                     self.num_cameras, 3, self.image_size[0], self.image_size[1]
                 ),
-                "lidar_points": torch.randn(1000, 4),
+                "lidar_points": lidar_points_7d,
                 "ego_state": torch.tensor([0.0, 0.0, 0.0, 5.0]),  # x, y, heading, speed
                 "trajectory": torch.randn(self.future_steps, 2) * 10,
                 "goal": torch.randn(2) * 20,

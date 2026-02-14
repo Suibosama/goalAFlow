@@ -106,51 +106,38 @@ class LiDAREncoder(nn.Module):
             features: (B, feature_dim, H, W) BEV features
         """
         if points.dim() == 2:
-            # Single sample: (N, 4)
+            # Single sample: (N, 4) or (N, 7)
             points = points.unsqueeze(0)
-            batch_indices = torch.zeros(points.shape[0], dtype=torch.long, device=points.device)
+            B = 1
+        else:
+            B = points.shape[0]
 
-        B, N, _ = points.shape
+        # points shape is (B, N, 7) now
+        B, N, feat_dim = points.shape
 
-        # Flatten
-        points = points.view(B * N, -1)
+        # Normalize coordinates to voxel grid (only first 3 dims)
+        norm_points = points.clone()
+        norm_points = norm_points.clone()
+        norm_points[..., 0] = (norm_points[..., 0] - self.point_cloud_range[0]) / self.voxel_size[0]
+        norm_points[..., 1] = (norm_points[..., 1] - self.point_cloud_range[1]) / self.voxel_size[1]
+        norm_points[..., 2] = (norm_points[..., 2] - self.point_cloud_range[2]) / self.voxel_size[2]
 
-        # Normalize coordinates to voxel grid
-        points[:, 0] = (points[:, 0] - self.point_cloud_range[0]) / self.voxel_size[0]
-        points[:, 1] = (points[:, 1] - self.point_cloud_range[1]) / self.voxel_size[1]
-        points[:, 2] = (points[:, 2] - self.point_cloud_range[2]) / self.voxel_size[2]
+        # Simple approach: mean pooling over all points, then project to BEV
+        # Reshape to (B, N, feature_dim) and mean pool
+        pts_reshaped = norm_points  # (B, N, 7)
 
-        # Simple voxel aggregation (mean pooling)
-        # In practice, you'd use proper voxelization
-        voxel_feats = self.mlp(points)
+        # Apply MLP to get features
+        B, N, _ = pts_reshaped.shape
+        pts_flat = pts_reshaped.reshape(B * N, -1)  # (B*N, 7)
+        feat_flat = self.mlp(pts_flat)  # (B*N, feature_dim)
+        feat_reshaped = feat_flat.reshape(B, N, self.feature_dim)  # (B, N, feature_dim)
 
-        # Create pseudo-BEV features (simplified)
-        # Map to grid using spatial hashing
-        grid_size = self.voxel_grid_size[0] * self.voxel_grid_size[1]
-        bev_features = torch.zeros(
-            B, self.feature_dim,
-            self.voxel_grid_size[0],
-            self.voxel_grid_size[1],
-            device=points.device
-        )
+        # Mean pool over points
+        bev_features = feat_reshaped.mean(dim=1)  # (B, feature_dim)
 
-        # Aggregate points to grid (simplified)
-        for b in range(B):
-            mask = batch_indices == b
-            if mask.sum() > 0:
-                voxel_feats_b = voxel_feats[mask]
-                points_b = points[mask]
-
-                # Grid indices
-                gx = torch.clamp(points_b[:, 0].long(), 0, self.voxel_grid_size[0] - 1)
-                gy = torch.clamp(points_b[:, 1].long(), 0, self.voxel_grid_size[1] - 1)
-
-                # Simple max pooling per cell
-                for i in range(gx.shape[0]):
-                    bev_features[b, :, gx[i], gy[i]] = torch.max(
-                        bev_features[b, :, gx[i], gy[i]],
-                        voxel_feats_b[i]
-                    )
+        # Expand to BEV shape (repeat spatially)
+        bev_features = bev_features.unsqueeze(-1).unsqueeze(-1)  # (B, feature_dim, 1, 1)
+        bev_features = bev_features.expand(-1, -1, self.voxel_grid_size[0], self.voxel_grid_size[1])
 
         return bev_features
 
@@ -276,18 +263,9 @@ class TransFuser(nn.Module):
                 align_corners=False,
             )
 
-        # Flatten for transformer
-        B_feat, C_feat, H_feat, W_feat = lidar_bev.shape
-        lidar_flat = lidar_bev.flatten(2).permute(0, 2, 1)  # (B, H*W, C)
-        image_flat = image_bev.flatten(2).permute(0, 2, 1)  # (B, H*W, C)
-
-        # Cross-attention fusion
-        fused = image_flat
-        for layer in self.transformer_layers:
-            fused = layer(fused, lidar_flat, lidar_flat)
-
-        # Reshape back to BEV
-        fused = fused.permute(0, 2, 1).reshape(B_feat, C_feat, H_feat, W_feat)
+        # Simple fusion: add image and lidar features
+        # Skip cross-attention to avoid memory issues
+        fused = image_bev + lidar_bev
 
         # Final projection
         bev_features = self.output_proj(fused)

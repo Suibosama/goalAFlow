@@ -130,7 +130,6 @@ class RectifiedFlow(nn.Module):
             "v_target": v_target,
         }
 
-    @torch.no_grad()
     def inference(
         self,
         x_0: torch.Tensor,

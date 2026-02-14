@@ -38,11 +38,11 @@ model:
     # LiDAR encoder
     lidar_backbone: "pointnet"
     lidar_feature_dim: 256
-    voxel_size: [0.4, 0.4, 0.4]
+    voxel_size: [2.0, 2.0, 0.4]
     point_cloud_range: [-50, -50, -3, 50, 50, 3]
 
     # BEV configuration
-    bev_resolution: [200, 200]  # cells
+    bev_resolution: [50, 50]  # cells
     bev_scale: 0.5  # meters per cell
     transformer_layers: 4
     num_heads: 8
@@ -85,7 +85,7 @@ model:
 training:
   # General
   max_epochs: 100
-  batch_size: 8
+  batch_size: 2
   learning_rate: 0.0001
   weight_decay: 0.0001
   gradient_clip: 1.0
